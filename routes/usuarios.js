@@ -42,7 +42,7 @@ module.exports = (dbConnection) => {
     });
 
     router.get('/', (req, res) => {
-        const query = 'SELECT id, nombre, email, rol FROM usuarios';
+        const query = 'SELECT id, nombre, email, rol, estado FROM usuarios';
         dbConnection.query(query, (err, results) => {
             if (err) {
                 console.error('Error al obtener los usuarios:', err);
@@ -54,7 +54,7 @@ module.exports = (dbConnection) => {
 
     router.get('/:id', (req, res) => {
         const { id } = req.params;
-        const query = 'SELECT id, nombre, email, rol FROM usuarios WHERE id = ?'; 
+        const query = 'SELECT id, nombre, email, rol, estado FROM usuarios WHERE id = ?'; 
         
         dbConnection.query(query, [id], (err, results) => {
             if (err) {
@@ -103,18 +103,33 @@ module.exports = (dbConnection) => {
         });
     });
 
-    router.delete('/:id', (req, res) => {
+    router.put('/activar/:id', (req, res) => {
         const { id } = req.params;
-        const query = 'DELETE FROM usuarios WHERE id = ?';
+        const query = "UPDATE usuarios SET estado = 'activo' WHERE id = ?";
         dbConnection.query(query, [id], (err, result) => {
             if (err) {
-                console.error('Error al eliminar el usuario:', err);
-                return res.status(500).send('Error al eliminar el usuario.');
+                console.error('Error al activar el usuario:', err);
+                return res.status(500).send('Error al activar el usuario.');
             }
             if (result.affectedRows === 0) {
                 return res.status(404).send('Usuario no encontrado.');
-                }
-            res.status(200).send('Usuario eliminado con éxito.');
+            }
+            res.status(200).send('Usuario activado.');
+        });
+    });
+
+    router.put('/desactivar/:id', (req, res) => {
+        const { id } = req.params;
+        const query = "UPDATE usuarios SET estado = 'inactivo' WHERE id = ?";
+        dbConnection.query(query, [id], (err, result) => {
+            if (err) {
+                console.error('Error al desactivar el usuario:', err);
+                return res.status(500).send('Error al desactivar el usuario.');
+            }
+            if (result.affectedRows === 0) {
+                return res.status(404).send('Usuario no encontrado.');
+            }
+            res.status(200).send('Usuario desactivado con éxito.');
         });
     });
 

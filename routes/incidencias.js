@@ -22,46 +22,49 @@ const sendNotification = (dbConnection, usuarioId, incidenciaId, mensaje) => {
 
 module.exports = (dbConnection) => {
     router.post('/', upload.single('foto'), async (req, res) => {
-        const { area, detalle, prioridad, responsable_id } = req.body;
+    // 1. Añade 'modulo' y 'hora' al obtenerlos del body
+    const { area, modulo, detalle, hora, prioridad, responsable_id } = req.body;
 
-        const file = req.file; 
-        let url_foto_almacenada = null; 
+    const file = req.file; 
+    let url_foto_almacenada = null; 
 
-        if (file) {
-            try {
-                url_foto_almacenada = await subirImagen(file);
-            } catch (error) {
-                console.error('Error al subir la imagen:', error.message);
-                return res.status(500).send('Error interno al procesar y subir la imagen.');
-            }
+    if (file) {
+        try {
+            url_foto_almacenada = await subirImagen(file);
+        } catch (error) {
+            console.error('Error al subir la imagen:', error.message);
+            return res.status(500).send('Error interno al procesar y subir la imagen.');
         }
+    }
 
-        const estado_inicial = 'Pendiente'; 
-        const query = 'INSERT INTO incidencias (area, modulo, descripcion, hora, prioridad, estado, responsable_id, url_foto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+    const estado_inicial = 'Pendiente'; 
+    const query = 'INSERT INTO incidencias (area, modulo, descripcion, hora, prioridad, estado, responsable_id, url_foto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
 
-        dbConnection.query(
-            query, 
-            [area, detalle, prioridad, estado_inicial, responsable_id, url_foto_almacenada], 
-            (err, result) => {
-                if (err) {
-                    console.error('Error al insertar la incidencia:', err);
-                    return res.status(500).send('Error al crear la incidencia en MySQL.');
-                }
-
-                const nuevaIncidenciaId = result.insertId;
-                if (responsable_id) {
-                    const mensajeNotif = `¡Se te ha asignado la nueva incidencia #${nuevaIncidenciaId} en el área de ${area}!`;
-                    sendNotification(dbConnection, responsable_id, nuevaIncidenciaId, mensajeNotif);
-                }
-
-                res.status(201).json({ message: 'Incidencia creada con exito.', id: nuevaIncidenciaId, url_foto: url_foto_almacenada });
+    dbConnection.query(
+        query, 
+        // 2. Añade las variables 'modulo' y 'hora' al array en el orden correcto
+        [area, modulo, detalle, hora, prioridad, estado_inicial, responsable_id, url_foto_almacenada], 
+        (err, result) => {
+            if (err) {
+                console.error('Error al insertar la incidencia:', err);
+                // Imprime el error completo para facilitar la depuración
+                console.log(err); 
+                return res.status(500).send('Error al crear la incidencia en MySQL.');
             }
-        );
-    });
+
+            const nuevaIncidenciaId = result.insertId;
+            if (responsable_id) {
+                const mensajeNotif = `¡Se te ha asignado la nueva incidencia #${nuevaIncidenciaId} en el área de ${area}!`;
+                sendNotification(dbConnection, responsable_id, nuevaIncidenciaId, mensajeNotif);
+            }
+
+            res.status(201).json({ message: 'Incidencia creada con exito.', id: nuevaIncidenciaId, url_foto: url_foto_almacenada });
+        }
+    );
+});
 
     router.post('/registrar-y-descargar', upload.single('foto'), async (req, res) => {
-        // ... (Tu lógica de inserción actual, ligeramente modificada) ...
-        const { area, detalle, prioridad, responsable_id, modulo, hora } = req.body; // Asegúrate de incluir todos los campos
+        const { area, modulo, detalle, prioridad, responsable_id, hora } = req.body;
         const file = req.file;
         let url_foto_almacenada = null;
 
@@ -75,8 +78,6 @@ module.exports = (dbConnection) => {
         }
 
         const estado_inicial = 'Pendiente';
-        // Nota: Ajusta la query y los parámetros a tu esquema real de DB. 
-        // He usado 'descripcion' y 'modulo' según el contexto de tu código.
         const query = 'INSERT INTO incidencias (area, modulo, descripcion, hora, prioridad, estado, responsable_id, url_foto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
 
         dbConnection.query(
@@ -90,37 +91,30 @@ module.exports = (dbConnection) => {
 
                 const nuevaIncidenciaId = result.insertId;
                 if (responsable_id) {
-                    // ... (Notificación) ...
+                    const mensajeNotif = `¡Se te ha asignado la nueva incidencia #${nuevaIncidenciaId} en el área de ${area}!`;
+                    sendNotification(dbConnection, responsable_id, nuevaIncidenciaId, mensajeNotif);
                 }
                 
-                // ----------------------------------------------------
-                // PASO CLAVE: GENERACIÓN y DESCARGA DEL REPORTE
-                // ----------------------------------------------------
                 try {
-                    // Prepara los datos para el reporte (usamos los datos de req.body y el ID generado)
                     const datosIncidenciaParaReporte = {
                         id: nuevaIncidenciaId,
                         area, 
-                        descripcion: detalle, // Mapeamos 'detalle' a 'descripcion'
+                        modulo,
+                        descripcion: detalle,
+                        hora,
                         prioridad,
                         estado: estado_inicial,
                         responsable_id,
                         url_foto: url_foto_almacenada,
-                        fecha_creacion: new Date(),
-                        responsable_nombre: "N/A" // Esto idealmente debería obtenerse del responsable_id
+                        fecha_creacion: new Date()
                     };
                     
                     const docBuffer = await generarReporteIncidencia(datosIncidenciaParaReporte);
-                    
-                    // Configurar las cabeceras para la descarga del archivo Word
                     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
                     res.setHeader('Content-Disposition', `attachment; filename=Reporte_Incidencia_${nuevaIncidenciaId}.docx`);
-                    
-                    // Enviar el buffer binario
                     res.send(docBuffer);
                 } catch (reportErr) {
                     console.error('Error al generar el reporte:', reportErr);
-                    // Si falla la generación del reporte, solo informa, pero la incidencia ya se guardó.
                     res.status(201).json({ 
                         message: 'Incidencia creada con éxito, pero falló la generación del reporte Word.', 
                         id: nuevaIncidenciaId 
@@ -132,8 +126,6 @@ module.exports = (dbConnection) => {
 
      router.get('/descargar-reporte/:id', (req, res) => {
         const { id } = req.params;
-        // Query para obtener todos los detalles de la incidencia, incluyendo el nombre del responsable si es posible
-        // Nota: Este query es un ejemplo. DEBERÍAS HACER un JOIN con tu tabla de usuarios para obtener el nombre.
         const query = 'SELECT i.*, u.nombre AS responsable_nombre FROM incidencias i LEFT JOIN usuarios u ON i.responsable_id = u.id WHERE i.id = ?';
 
         dbConnection.query(query, [id], async (err, results) => {
@@ -149,12 +141,8 @@ module.exports = (dbConnection) => {
 
             try {
                 const docBuffer = await generarReporteIncidencia(incidenciaData);
-                
-                // Configurar las cabeceras para la descarga del archivo Word
                 res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
                 res.setHeader('Content-Disposition', `attachment; filename=Reporte_Incidencia_${id}.docx`);
-                
-                // Enviar el buffer binario
                 res.send(docBuffer);
             } catch (reportErr) {
                 console.error('Error al generar el reporte por ID:', reportErr);
