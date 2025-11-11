@@ -1,15 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
+const upload = require('../services/storageService');
 
 module.exports = (dbConnection) => {
 
-    router.post('/', async (req, res) => {
+    router.post('/', upload.any(), async (req, res) => {
         const { nombre, email, password, rol } = req.body;
+        const file = req.files && req.files.length > 0 ? req.files[0] : null;
+        const foto_perfil_url = file?.path || null;
+
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
-        const query = 'INSERT INTO usuarios (nombre, email, password, rol) VALUES (?, ?, ?, ?)';
-        dbConnection.query(query, [nombre, email, hashedPassword, rol], (err, result) => {                   
+        const query = 'INSERT INTO usuarios (nombre, email, password, rol, foto_perfil) VALUES (?, ?, ?, ?, ?)';
+        dbConnection.query(query, [nombre, email, hashedPassword, rol, foto_perfil_url], (err, result) => {                   
             if (err) {                
                 console.error('Error al registrar el usuario:', err);                
                 if (err.code === 'ER_DUP_ENTRY') {                    
@@ -36,13 +40,13 @@ module.exports = (dbConnection) => {
             if (!isMatch) {
                 return res.status(400).send('Email o contraseña incorrectos.');
             }
-            const userWithoutPassword = { id: user.id, nombre: user.nombre, email: user.email, rol: user.rol };
+            const userWithoutPassword = { id: user.id, nombre: user.nombre, email: user.email, rol: user.rol, foto_perfil: user.foto_perfil };
             res.status(200).json({ message: 'Login exitoso.', user: userWithoutPassword });         
         });    
     });
 
     router.get('/', (req, res) => {
-        const query = 'SELECT id, nombre, email, rol, estado FROM usuarios';
+        const query = 'SELECT id, nombre, email, rol, estado, foto_perfil FROM usuarios';
         dbConnection.query(query, (err, results) => {
             if (err) {
                 console.error('Error al obtener los usuarios:', err);
@@ -54,7 +58,7 @@ module.exports = (dbConnection) => {
 
     router.get('/:id', (req, res) => {
         const { id } = req.params;
-        const query = 'SELECT id, nombre, email, rol, estado FROM usuarios WHERE id = ?'; 
+        const query = 'SELECT id, nombre, email, rol, estado, foto_perfil FROM usuarios WHERE id = ?'; 
         
         dbConnection.query(query, [id], (err, results) => {
             if (err) {
@@ -68,39 +72,52 @@ module.exports = (dbConnection) => {
         });
     });
 
-    router.put('/:id', async (req, res) => {
+    router.put('/:id', upload.any(), async (req, res) => {
         const { id } = req.params;
         let { nombre, email, password, rol } = req.body;
 
+        const file = req.files && req.files.length > 0 ? req.files[0] : null;
+        const foto_perfil_url = file?.path || null;
+
         let query, values;
 
-        if (!password || password.trim() === "") {
-            query = 'UPDATE usuarios SET nombre = ?, email = ?, rol = ? WHERE id = ?';
-            values = [nombre, email, rol, id];
-        } else {
-            try {
+        try {
+            if (!password || password.trim() === "") {
+                if (foto_perfil_url) {
+                    query = 'UPDATE usuarios SET nombre = ?, email = ?, rol = ?, foto_perfil = ? WHERE id = ?';
+                    values = [nombre, email, rol, foto_perfil_url, id];
+                } else {
+                    query = 'UPDATE usuarios SET nombre = ?, email = ?, rol = ? WHERE id = ?';
+                    values = [nombre, email, rol, id];
+                }
+            } else {
                 const salt = await bcrypt.genSalt(10);
                 const hashedPassword = await bcrypt.hash(password, salt);
-                
-                query = 'UPDATE usuarios SET nombre = ?, email = ?, password = ?, rol = ? WHERE id = ?';
-                values = [nombre, email, hashedPassword, rol, id];
 
-            } catch (error) {
-                console.error('Error al hashear el password:', error);
-                return res.status(500).send('Error interno al procesar el password.');
+                if (foto_perfil_url) {
+                    query = 'UPDATE usuarios SET nombre = ?, email = ?, password = ?, rol = ?, foto_perfil = ? WHERE id = ?';
+                    values = [nombre, email, hashedPassword, rol, foto_perfil_url, id];
+                } else {
+                    query = 'UPDATE usuarios SET nombre = ?, email = ?, password = ?, rol = ? WHERE id = ?';
+                    values = [nombre, email, hashedPassword, rol, id];
+                }
             }
+
+            dbConnection.query(query, values, (err, result) => {
+                if (err) {
+                    console.error('Error al actualizar el usuario:', err);
+                    return res.status(500).send('Error al actualizar el usuario.');
+                }
+                if (result.affectedRows === 0) {
+                    return res.status(404).send('Usuario no encontrado.');
+                }
+                res.status(200).json({ message: 'Usuario actualizado con éxito.', foto_perfil: foto_perfil_url });
+            });
+
+        } catch (error) {
+            console.error('Error interno:', error);
+            return res.status(500).send('Error interno del servidor.');
         }
-
-        dbConnection.query(query, values, (err, result) => {
-            if (err) {
-                console.error('Error al actualizar el usuario:', err);
-                return res.status(500).send('Error al actualizar el usuario.');
-            }
-            if (result.affectedRows === 0) {
-                return res.status(404).send('Usuario no encontrado.');
-            }
-            res.status(200).send('Usuario actualizado con éxito.');
-        });
     });
 
     router.put('/activar/:id', (req, res) => {

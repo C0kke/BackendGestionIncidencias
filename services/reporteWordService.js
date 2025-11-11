@@ -1,13 +1,8 @@
 const docx = require('docx');
-const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, HeadingLevel } = docx;
+const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, BorderStyle, HeadingLevel, AlignmentType, ImageRun } = docx;
+const axios = require('axios');
 
-/**
- * Genera el buffer del documento Word a partir de los datos de la incidencia.
- * @param {object} data - Los datos de la incidencia obtenidos de la base de datos.
- * @returns {Promise<Buffer>} El buffer del archivo .docx.
- */
 async function generarReporteIncidencia(data) {
-    // Función auxiliar para crear la tabla de detalles
     const createDetailsTable = (incidencia) => {
         return new Table({
             columnWidths: [3000, 6000],
@@ -15,41 +10,46 @@ async function generarReporteIncidencia(data) {
                 new TableRow({
                     children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "ID Incidencia", bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: `#${incidencia.id}` })] }),
+                        new TableCell({ children: [new Paragraph(`#${incidencia.id}`)] }),
                     ],
                 }),
                 new TableRow({
                     children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Área", bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: incidencia.area })] }),
+                        new TableCell({ children: [new Paragraph(incidencia.area || 'N/A')] }),
+                    ],
+                }),
+                new TableRow({
+                    children: [
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Módulo", bold: true })] })] }),
+                        new TableCell({ children: [new Paragraph(incidencia.modulo || 'N/A')] }),
                     ],
                 }),
                 new TableRow({
                     children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Prioridad", bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: incidencia.prioridad })] }),
+                        new TableCell({ children: [new Paragraph(incidencia.prioridad || 'N/A')] }),
                     ],
                 }),
                 new TableRow({
                     children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Estado", bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: incidencia.estado })] }),
+                        new TableCell({ children: [new Paragraph(incidencia.estado || 'N/A')] }),
                     ],
                 }),
                 new TableRow({
                     children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Responsable", bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: incidencia.responsable_nombre || 'N/A' })] }), // Asumiendo que puede obtener el nombre
+                        new TableCell({ children: [new Paragraph(incidencia.responsable_nombre || 'N/A')] }),
                     ],
                 }),
                 new TableRow({
                     children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Fecha Creación", bold: true })] })] }),
-                        new TableCell({ children: [new Paragraph({ text: incidencia.fecha_creacion ? new Date(incidencia.fecha_creacion).toLocaleString() : 'N/A' })] }),
+                        new TableCell({ children: [new Paragraph(incidencia.fecha_creacion ? new Date(incidencia.fecha_creacion).toLocaleString() : 'N/A')] }),
                     ],
                 }),
             ],
-            // Estilos simples para la tabla (opcional)
             borders: {
                 top: { style: BorderStyle.SINGLE, size: 6, color: "auto" },
                 bottom: { style: BorderStyle.SINGLE, size: 6, color: "auto" },
@@ -61,47 +61,65 @@ async function generarReporteIncidencia(data) {
         });
     };
 
-    const document = new Document({
-        sections: [{
-            children: [
-                new Paragraph({
-                    text: `REPORTE DE INCIDENCIA #${data.id}`,
-                    heading: HeadingLevel.TITLE,
-                    alignment: docx.AlignmentType.CENTER,
-                    spacing: { after: 300 }
-                }),
-                
-                // --- Sección de Detalles Clave ---
-                new Paragraph({
-                    text: "Detalles Clave",
-                    heading: HeadingLevel.HEADING_2,
-                    spacing: { after: 150 }
-                }),
-                createDetailsTable(data),
-                
-                new Paragraph({ text: "", spacing: { after: 300 } }), // Espacio
-                
-                // --- Sección de Descripción ---
-                new Paragraph({
-                    text: "Descripción Completa",
-                    heading: HeadingLevel.HEADING_2,
-                    spacing: { after: 150 }
-                }),
-                new Paragraph({
-                    text: data.descripcion || 'No se proporcionó una descripción.',
-                    spacing: { after: 300 }
-                }),
+    // Si hay una imagen Cloudinary, la descargamos como buffer binario
+    let imageRun = null;
+    if (data.url_foto) {
+        try {
+            const response = await axios.get(data.url_foto, { responseType: 'arraybuffer' });
+            const imageBuffer = Buffer.from(response.data, 'binary');
+            imageRun = new ImageRun({
+                data: imageBuffer,
+                transformation: { width: 400, height: 300 },
+            });
+        } catch (err) {
+            console.error("Error al obtener imagen para el reporte:", err.message);
+        }
+    }
 
-                // --- URL de Foto (Opcional) ---
-                new Paragraph({
-                    text: `URL de Evidencia: ${data.url_foto || 'N/A'}`,
-                    spacing: { before: 300 }
-                }),
-            ],
-        }],
+    const children = [
+        new Paragraph({
+            text: `REPORTE DE INCIDENCIA #${data.id}`,
+            heading: HeadingLevel.TITLE,
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 400 },
+        }),
+        new Paragraph({
+            text: "Detalles Clave",
+            heading: HeadingLevel.HEADING_2,
+            spacing: { after: 200 },
+        }),
+        createDetailsTable(data),
+        new Paragraph({ text: "", spacing: { after: 300 } }),
+        new Paragraph({
+            text: "Descripción Completa",
+            heading: HeadingLevel.HEADING_2,
+            spacing: { after: 200 },
+        }),
+        new Paragraph({
+            text: data.descripcion || "No se proporcionó descripción.",
+            spacing: { after: 400 },
+        }),
+    ];
+
+    if (imageRun) {
+        children.push(
+            new Paragraph({
+                text: "Evidencia fotográfica",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { after: 150 },
+            }),
+            new Paragraph({
+                children: [imageRun],
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 200, after: 400 },
+            })
+        );
+    }
+
+    const document = new Document({
+        sections: [{ children }],
     });
 
-    // Genera el buffer binario del archivo .docx
     const buffer = await Packer.toBuffer(document);
     return buffer;
 }

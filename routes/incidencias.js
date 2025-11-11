@@ -1,14 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');   
-
-const { subirImagen } = require('../services/storageService'); 
+const upload = require('../services/storageService');
 const { generarReporteIncidencia } = require('../services/reporteWordService'); 
-
-const upload = multer({ 
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 }
-});
 
 const sendNotification = (dbConnection, usuarioId, incidenciaId, mensaje) => {
     if (!usuarioId) return;
@@ -21,68 +14,49 @@ const sendNotification = (dbConnection, usuarioId, incidenciaId, mensaje) => {
 };
 
 module.exports = (dbConnection) => {
-    router.post('/', upload.single('foto'), async (req, res) => {
-    // 1. Añade 'modulo' y 'hora' al obtenerlos del body
-    const { area, modulo, detalle, hora, prioridad, responsable_id } = req.body;
-
-    const file = req.file; 
-    let url_foto_almacenada = null; 
-
-    if (file) {
-        try {
-            url_foto_almacenada = await subirImagen(file);
-        } catch (error) {
-            console.error('Error al subir la imagen:', error.message);
-            return res.status(500).send('Error interno al procesar y subir la imagen.');
-        }
-    }
-
-    const estado_inicial = 'Pendiente'; 
-    const query = 'INSERT INTO incidencias (area, modulo, descripcion, hora, prioridad, estado, responsable_id, url_foto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-
-    dbConnection.query(
-        query, 
-        // 2. Añade las variables 'modulo' y 'hora' al array en el orden correcto
-        [area, modulo, detalle, hora, prioridad, estado_inicial, responsable_id, url_foto_almacenada], 
-        (err, result) => {
-            if (err) {
-                console.error('Error al insertar la incidencia:', err);
-                // Imprime el error completo para facilitar la depuración
-                console.log(err); 
-                return res.status(500).send('Error al crear la incidencia en MySQL.');
-            }
-
-            const nuevaIncidenciaId = result.insertId;
-            if (responsable_id) {
-                const mensajeNotif = `¡Se te ha asignado la nueva incidencia #${nuevaIncidenciaId} en el área de ${area}!`;
-                sendNotification(dbConnection, responsable_id, nuevaIncidenciaId, mensajeNotif);
-            }
-
-            res.status(201).json({ message: 'Incidencia creada con exito.', id: nuevaIncidenciaId, url_foto: url_foto_almacenada });
-        }
-    );
-});
-
-    router.post('/registrar-y-descargar', upload.single('foto'), async (req, res) => {
-        const { area, modulo, detalle, prioridad, responsable_id, hora } = req.body;
-        const file = req.file;
-        let url_foto_almacenada = null;
-
-        if (file) {
-            try {
-                url_foto_almacenada = await subirImagen(file);
-            } catch (error) {
-                console.error('Error al subir la imagen:', error.message);
-                return res.status(500).send('Error interno al procesar y subir la imagen.');
-            }
-        }
+    router.post('/', upload.any(), async (req, res) => {
+        const { area, modulo, detalle, hora, prioridad, responsable_id } = req.body;
+        const file = req.files && req.files.length > 0 ? req.files[0] : null;
+        let url_foto_almacenada = file?.path || null;
 
         const estado_inicial = 'Pendiente';
         const query = 'INSERT INTO incidencias (area, modulo, descripcion, hora, prioridad, estado, responsable_id, url_foto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
 
         dbConnection.query(
             query,
-            [area, modulo, detalle, hora, prioridad, estado_inicial, responsable_id, url_foto_almacenada], 
+            [area, modulo, detalle, hora, prioridad, estado_inicial, responsable_id, url_foto_almacenada],
+            (err, result) => {
+                if (err) {
+                    console.error('Error al insertar la incidencia:', err);
+                    return res.status(500).send('Error al crear la incidencia en MySQL.');
+                }
+
+                const nuevaIncidenciaId = result.insertId;
+                if (responsable_id) {
+                    const mensajeNotif = `¡Se te ha asignado la nueva incidencia #${nuevaIncidenciaId} en el área de ${area}!`;
+                    sendNotification(dbConnection, responsable_id, nuevaIncidenciaId, mensajeNotif);
+                }
+
+                res.status(201).json({
+                    message: 'Incidencia creada con éxito.',
+                    id: nuevaIncidenciaId,
+                    url_foto: url_foto_almacenada
+                });
+            }
+        );
+    });
+
+    router.post('/registrar-y-descargar', upload.any(), async (req, res) => {
+        const { area, modulo, detalle, prioridad, responsable_id, hora } = req.body;
+        const file = req.files && req.files.length > 0 ? req.files[0] : null;
+        let url_foto_almacenada = file?.path || null;
+
+        const estado_inicial = 'Pendiente';
+        const query = 'INSERT INTO incidencias (area, modulo, descripcion, hora, prioridad, estado, responsable_id, url_foto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+
+        dbConnection.query(
+            query,
+            [area, modulo, detalle, hora, prioridad, estado_inicial, responsable_id, url_foto_almacenada],
             async (err, result) => {
                 if (err) {
                     console.error('Error al insertar la incidencia:', err);
@@ -94,11 +68,11 @@ module.exports = (dbConnection) => {
                     const mensajeNotif = `¡Se te ha asignado la nueva incidencia #${nuevaIncidenciaId} en el área de ${area}!`;
                     sendNotification(dbConnection, responsable_id, nuevaIncidenciaId, mensajeNotif);
                 }
-                
+
                 try {
                     const datosIncidenciaParaReporte = {
                         id: nuevaIncidenciaId,
-                        area, 
+                        area,
                         modulo,
                         descripcion: detalle,
                         hora,
@@ -108,48 +82,92 @@ module.exports = (dbConnection) => {
                         url_foto: url_foto_almacenada,
                         fecha_creacion: new Date()
                     };
-                    
+
                     const docBuffer = await generarReporteIncidencia(datosIncidenciaParaReporte);
                     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
                     res.setHeader('Content-Disposition', `attachment; filename=Reporte_Incidencia_${nuevaIncidenciaId}.docx`);
                     res.send(docBuffer);
                 } catch (reportErr) {
                     console.error('Error al generar el reporte:', reportErr);
-                    res.status(201).json({ 
-                        message: 'Incidencia creada con éxito, pero falló la generación del reporte Word.', 
-                        id: nuevaIncidenciaId 
+                    res.status(201).json({
+                        message: 'Incidencia creada con éxito, pero falló la generación del reporte Word.',
+                        id: nuevaIncidenciaId
                     });
                 }
             }
         );
     });
 
-     router.get('/descargar-reporte/:id', (req, res) => {
+    /* router.put('/:id', upload.any(), async (req, res) => {
         const { id } = req.params;
-        const query = 'SELECT i.*, u.nombre AS responsable_nombre FROM incidencias i LEFT JOIN usuarios u ON i.responsable_id = u.id WHERE i.id = ?';
+        const { area, modulo, descripcion, hora, prioridad, estado, responsable_id } = req.body;
+        const file = req.files && req.files.length > 0 ? req.files[0] : null;
+        let nuevaUrlFoto = file?.path || null;
 
-        dbConnection.query(query, [id], async (err, results) => {
-            if (err) {
-                console.error('Error al obtener la incidencia para el reporte:', err);
-                return res.status(500).send('Error al obtener la incidencia.');
-            }
-            if (results.length === 0) {
-                return res.status(404).send('Incidencia no encontrada.');
-            }
+        try {
+            const getResponsableQuery = 'SELECT responsable_id, url_foto FROM incidencias WHERE id = ?';
+            dbConnection.query(getResponsableQuery, [id], (err, results) => {
+                if (err || results.length === 0) {
+                    return res.status(404).send('Incidencia no encontrada.');
+                }
 
-            const incidenciaData = results[0];
+                const responsableAnteriorId = results[0].responsable_id;
+                const urlFotoAnterior = results[0].url_foto;
 
-            try {
-                const docBuffer = await generarReporteIncidencia(incidenciaData);
-                res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-                res.setHeader('Content-Disposition', `attachment; filename=Reporte_Incidencia_${id}.docx`);
-                res.send(docBuffer);
-            } catch (reportErr) {
-                console.error('Error al generar el reporte por ID:', reportErr);
-                res.status(500).send('Error al generar el reporte Word.');
-            }
-        });
-    });
+                let query = 'UPDATE incidencias SET area = ?, modulo = ?, descripcion = ?, hora = ?, prioridad = ?, estado = ?, responsable_id = ?, fecha_actualizacion = CURRENT_TIMESTAMP';
+                const params = [area, modulo, descripcion, hora, prioridad, estado, responsable_id];
+
+                if (nuevaUrlFoto) {
+                    query += ', url_foto = ?';
+                    params.push(nuevaUrlFoto);
+                } else if (urlFotoAnterior && urlFotoAnterior !== '') {
+                    query += ', url_foto = ?';
+                    params.push(urlFotoAnterior);
+                } else {
+                    query += ', url_foto = NULL';
+                }
+
+                query += ' WHERE id = ?';
+                params.push(id);
+
+                dbConnection.query(query, params, (err, result) => {
+                    if (err) {
+                        console.error('Error al actualizar la incidencia:', err);
+                        return res.status(500).send('Error al actualizar la incidencia.');
+                    }
+
+                    if (result.affectedRows === 0) {
+                        return res.status(404).send('Incidencia no encontrada.');
+                    }
+
+                    const responsableChanged = responsable_id !== responsableAnteriorId;
+
+                    if (responsableChanged) {
+                        if (responsableAnteriorId) {
+                            const mensajeAntiguo = `La incidencia #${id} ha sido reasignada a otra persona.`;
+                            sendNotification(dbConnection, responsableAnteriorId, id, mensajeAntiguo);
+                        }
+
+                        if (responsable_id) {
+                            const mensajeNuevo = `Se te asignó la incidencia #${id}`;
+                            sendNotification(dbConnection, responsable_id, id, mensajeNuevo);
+                        }
+                    } else if (responsable_id) {
+                        const mensajeGeneral = `La incidencia #${id} ha sido actualizada.`;
+                        sendNotification(dbConnection, responsable_id, id, mensajeGeneral);
+                    }
+
+                    res.status(200).json({
+                        message: 'Incidencia actualizada con éxito.',
+                        nueva_url_foto: nuevaUrlFoto || urlFotoAnterior || null
+                    });
+                });
+            });
+        } catch (error) {
+            console.error('Error general al actualizar incidencia:', error);
+            res.status(500).send('Error interno al actualizar la incidencia.');
+        }
+    }); */
 
     router.get('/', (req, res) => {
         const query = 'SELECT * FROM incidencias';
@@ -159,6 +177,68 @@ module.exports = (dbConnection) => {
                 return res.status(500).send('Error al obtener las incidencias.');
             }
             res.status(200).json(results);
+        });
+    });
+
+    router.get('/descargar-reporte/:id', (req, res) => {
+        const { id } = req.params;
+
+        const query = `
+            SELECT 
+            i.id,
+            i.area,
+            i.modulo,
+            i.descripcion,
+            i.hora,
+            i.prioridad,
+            i.estado,
+            i.responsable_id,
+            i.url_foto,
+            i.fecha_creacion,
+            u.nombre AS responsable_nombre
+            FROM incidencias i
+            LEFT JOIN usuarios u ON i.responsable_id = u.id
+            WHERE i.id = ?;
+        `;
+
+        dbConnection.query(query, [id], async (err, results) => {
+            if (err) {
+                console.error('Error al obtener la incidencia para el reporte:', err);
+                return res.status(500).send('Error al obtener la incidencia.');
+            }
+                if (results.length === 0) {
+                return res.status(404).send('Incidencia no encontrada.');
+            }
+
+            const i = results[0];
+
+            try {
+                const datos = {
+                    id: i.id,
+                    area: i.area,
+                    modulo: i.modulo,
+                    descripcion: i.descripcion,
+                    hora: i.hora,
+                    prioridad: i.prioridad,
+                    estado: i.estado,
+                    responsable_id: i.responsable_id,
+                    responsable_nombre: i.responsable_nombre,
+                    url_foto: i.url_foto || null,
+                    fecha_creacion: i.fecha_creacion || new Date(),
+                };
+
+                const docBuffer = await generarReporteIncidencia(datos);
+
+                res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+                res.setHeader('Content-Disposition', `attachment; filename=Reporte_Incidencia_${id}.docx`);
+                res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+                res.setHeader('Content-Length', Buffer.byteLength(docBuffer));
+
+                return res.end(docBuffer);
+            } catch (e) {
+                console.error('Error al generar el reporte por ID:', e);
+                return res.status(500).send('Error al generar el reporte Word.');
+            }
         });
     });
 
@@ -223,60 +303,6 @@ module.exports = (dbConnection) => {
                 }
 
                 res.status(200).json({ message: `Estado de la incidencia ${id} actualizado a ${estado}.` });
-            });
-        });
-    });
-
-    router.put('/:id', (req, res) => {
-        const { id } = req.params;
-        const { area, modulo, descripcion, hora, prioridad, estado, responsable_id, url_foto } = req.body; 
-
-        const getResponsableQuery = 'SELECT responsable_id FROM incidencias WHERE id = ?';
-        dbConnection.query(getResponsableQuery, [id], (err, results) => {
-            if (err || results.length === 0) {
-                return res.status(404).send('Incidencia no encontrada.');
-            }
-            const responsableAnteriorId = results[0].responsable_id;
-
-            let query = 'UPDATE incidencias SET area = ?, modulo = ?, descripcion = ?, hora = ?, prioridad = ?, estado = ?, responsable_id = ?, fecha_actualizacion = CURRENT_TIMESTAMP';
-            let params = [area, modulo, descripcion, hora, prioridad, estado, responsable_id];
-            
-            if (url_foto !== undefined) {
-                query += ', url_foto = ?';
-                params.push(url_foto);
-            }
-            
-            query += ' WHERE id = ?';
-            params.push(id);
-            
-            dbConnection.query(query, params, (err, result) => {
-                if (err) {
-                    console.error('Error al actualizar la incidencia:', err);
-                    return res.status(500).send('Error al actualizar la incidencia.');
-                }
-                
-                if (result.affectedRows === 0) {
-                    return res.status(404).send('Incidencia no encontrada.');
-                }
-
-                const responsableChanged = responsable_id !== responsableAnteriorId;
-
-                if (responsableChanged) {
-                    if (responsableAnteriorId) {
-                        const mensajeAntiguo = `La incidencia #${id} ha sido reasignada a otra persona.`;
-                        sendNotification(dbConnection, responsableAnteriorId, id, mensajeAntiguo);
-                    }
-                    
-                    if (responsable_id) {
-                        const mensajeNuevo = `Se te asignó la incidencia #${id}`;
-                        sendNotification(dbConnection, responsable_id, id, mensajeNuevo);
-                    }
-                } else if (responsable_id) {
-                    const mensajeGeneral = `La incidencia #${id} ha sido actualizada.`;
-                    sendNotification(dbConnection, responsable_id, id, mensajeGeneral);
-                }
-
-                res.status(200).send('Incidencia actualizada con éxito.');
             });
         });
     });
